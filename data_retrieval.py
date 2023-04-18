@@ -53,8 +53,26 @@ def check_asset_ok(api,ticker):
         lg.error(e)
         sys.exit()"""
 
+def send_data(redis_conn, producer, message_channel, message, counter):
+    
+    # Send by a redis stream
+    # IN: redis connection, message, counter
+    # OUT: None
+    try:
+        data = {
+            "producer": producer,
+            "channel": message_channel,
+            "message": message,
+            "count": counter
+        }
+        redis_conn.xadd(producer, data)
+        counter += 1
+    except Exception as e:
+        print(e)
+        return
 
 # execute trading bot
+message_counter = 1
 
 def run(logger, trading_api_name):
 
@@ -68,6 +86,8 @@ def run(logger, trading_api_name):
     logger.info(LOGGING_APP_NAME, 'Updated Bar format: BU,utc timestamp,open,high,low,close,volume,vwap,trade_count')
 
     redis_conn = redis.Redis(host='localhost', port=6379, db=0)
+    
+    REDIS_PRODUCER = "data_retriever1"
     if redis_conn is None:
         logger.error(LOGGING_APP_NAME, 'Could not connect to Redis, aborting')
         sys.exit()
@@ -84,47 +104,65 @@ def run(logger, trading_api_name):
     # check our trading account
     check_account_ok(api, logger)
 
-    tickers = ['SPY', 'TSLA']
+    
+
+    tickers = ['SPY', 'TSLA', 'GOOGL']
 
     # async handlers
     def quote_data_handler(data):
+        global message_counter
         # quote data will arrive here
         dt = datetime.timestamp(data['timestamp'])
         message =f"Q,{dt:.6f},{data['bid_price']},{data['ask_price']},{data['bid_size']},{data['ask_size']}"
         logger.info(data['ticker'], message)
 
         message =f"{data['ticker']},{dt:.6f},{data['bid_price']},{data['ask_price']},{data['bid_size']},{data['ask_size']}"
-        redis_conn.publish('quotes', message)
+        send_data(redis_conn, REDIS_PRODUCER, 'quotes', message, message_counter)
+        message_counter += 1
+        #redis_conn.publish('quotes', message)
 
     def trade_data_handler(data):
+        print(data)
+        global message_counter
         # trade data will arrive here
         dt = datetime.timestamp(data['timestamp'])
         message =f"T,{dt:.6f},{data['price']},{data['size']}"
         logger.info(data['ticker'], message)
 
         message =f"{data['ticker']},{dt:.6f},{data['price']},{data['size']}"
-        redis_conn.publish('trades', message)
+        send_data(redis_conn, REDIS_PRODUCER, 'trades', message, message_counter)
+        message_counter += 1
+        #redis_conn.publish('trades', message)
 
     def updated_bar_handler(data):
+        global message_counter
         # updated bar data will arrive here
         dt = datetime.timestamp(data['timestamp'])
         message =f"BU,{dt:.6f},{data['open']},{data['high']},{data['low']},{data['close']},{data['volume'],data['vwap'],data['trade_count']}"
+        message = message.replace("(", "").replace(")", "").replace(" ", "")
         logger.info(data['ticker'], message)
 
         message = f"{data['ticker']},{dt:.6f},{data['open']},{data['high']},{data['low']},{data['close']},{data['volume'],data['vwap'],data['trade_count']}"
         message = message.replace("(", "").replace(")", "").replace(" ", "")
-        redis_conn.publish('bars_updated', message)
+        send_data(redis_conn, REDIS_PRODUCER, 'bars_updated', message, message_counter)
+        message_counter += 1
+        #redis_conn.publish('bars_updated', message)
         
 
     def bars_handler(data):
+        print(data)
+        global message_counter
         # One minute bar data will arrive here
         dt = datetime.timestamp(data['timestamp'])
         message =f"B,{dt:.6f},{data['open']},{data['high']},{data['low']},{data['close']},{data['volume'],data['vwap'],data['trade_count']}"
+        message = message.replace("(", "").replace(")", "").replace(" ", "")
         logger.info(data['ticker'], message)
 
         message = f"{data['ticker']},{dt:.6f},{data['open']},{data['high']},{data['low']},{data['close']},{data['volume'],data['vwap'],data['trade_count']}"
         message = message.replace("(", "").replace(")", "").replace(" ", "")
-        redis_conn.publish('bars', message)
+        send_data(redis_conn, REDIS_PRODUCER, 'bars', message, message_counter)
+        message_counter += 1
+        #redis_conn.publish('bars', message)
 
     api.start_data_stream(tickers, quote_data_handler, bars_handler, trade_data_handler, updated_bar_handler )
     

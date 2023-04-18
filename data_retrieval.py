@@ -10,8 +10,6 @@ import redis
 #from trading_apis.trading_api import TradingAPI
 from trading_apis.alpaca_api import AlpacaAPI
 
-LOGGING_APP_NAME = "bot"
-
 # check our trading account
 def check_account_ok(api, logger):
     try:
@@ -53,11 +51,66 @@ def check_asset_ok(api,ticker):
         lg.error(e)
         sys.exit()"""
 
+def datetimeToFormattedString(dt):
+    """Convert a timestamp to a formatted string with
+    6 decimal places.
+    Args:
+        ts (float): The datetimeto convert
+    Returns:
+        str: The formatted string"""
+    return f"{datetime.timestamp(dt):.6f}"
+
+def send_message(redis_conn, logger, producer, message_channel, counter, data, keys_for_message):
+    """Compose the message to send to the redis stream
+    Args:
+        redis_conn (redis.Redis): The redis connection
+        logger (Logger): The logger
+        producer (str): The producer of the message
+        message_channel (str): The channel of the message
+        counter (int): The counter of the message
+        data (dict): The data to send
+        keys_for_message (list): The keys to send
+    """
+    try:
+        
+        # The timestamp is a datetime object, convert it to a unix timestamp
+        # string with 6 decimal places.
+        data['timestamp'] = datetimeToFormattedString(data['timestamp'])
+
+        # Compose the message and send to redis
+        # The redis message does not have the type identifier like "T" or "B"
+        message = ""
+        keys_for_redis = keys_for_message.copy()
+        keys_for_redis.remove('id_string')
+        for key in keys_for_redis:
+            message += str(data[key]) + ","
+        message = message[:-1]
+        send_data(redis_conn, producer, message_channel, message, counter)
+
+        # Compose the message for logging and send to logger
+        # The logger message does not have the ticker
+        keys_for_log = keys_for_message.copy()
+        keys_for_log.remove('ticker')
+        message = ""
+        for key in keys_for_log:
+            message += str(data[key]) + ","
+        message = message[:-1]
+        logger.info(data['ticker'], message)
+
+    except Exception as e:
+        print(e)
+    
+    return
+    
 def send_data(redis_conn, producer, message_channel, message, counter):
     
-    # Send by a redis stream
-    # IN: redis connection, message, counter
-    # OUT: None
+    """Send data to redis stream
+    Args:
+        redis_conn (redis.Redis): The redis connection
+        producer (str): The producer of the message
+        message_channel (str): The channel of the message
+        message (str): The message to send
+        counter (int): The counter of the message"""
     try:
         data = {
             "producer": producer,
@@ -69,21 +122,28 @@ def send_data(redis_conn, producer, message_channel, message, counter):
         counter += 1
     except Exception as e:
         print(e)
-        return
 
-# execute trading bot
+    return
+
+
+LOGGING_APP_NAME = "bot"
+tickers = ['SPY', 'TSLA', 'GOOGL']
 message_counter = 1
 
 def run(logger, trading_api_name):
+    """Run the trading bot"""
 
-# initialize the logger (imported from logger)
+    global LOGGING_APP_NAME
+    global tickers
+    
+    # initialize the logger (imported from logger)
     logger = Logger(config)
 
     logger.info(LOGGING_APP_NAME, f'Starting {trading_api_name} trading bot')
     logger.info(LOGGING_APP_NAME, 'Quote format: Q,utc timestamp,bid_price,ask_price,bid_size,ask_size')
     logger.info(LOGGING_APP_NAME, 'Trade format: T,utc timestamp,price,size')
-    logger.info(LOGGING_APP_NAME, 'Bar format: B,utc timestamp,open,high,low,close,volume,vwap,trade_count')
-    logger.info(LOGGING_APP_NAME, 'Updated Bar format: BU,utc timestamp,open,high,low,close,volume,vwap,trade_count')
+    logger.info(LOGGING_APP_NAME, 'Bar format: B,utc timestamp,minutes_timespan,open,high,low,close,volume,vwap,trade_count')
+    logger.info(LOGGING_APP_NAME, 'Updated Bar format: BU,utc timestamp,minutes_timespan,open,high,low,close,volume,vwap,trade_count')
 
     redis_conn = redis.Redis(host='localhost', port=6379, db=0)
     
@@ -103,68 +163,48 @@ def run(logger, trading_api_name):
 
     # check our trading account
     check_account_ok(api, logger)
-
     
-
-    tickers = ['SPY', 'TSLA', 'GOOGL']
-
     # async handlers
     def quote_data_handler(data):
+
         global message_counter
-        # quote data will arrive here
-        dt = datetime.timestamp(data['timestamp'])
-        message =f"Q,{dt:.6f},{data['bid_price']},{data['ask_price']},{data['bid_size']},{data['ask_size']}"
-        logger.info(data['ticker'], message)
-
-        message =f"{data['ticker']},{dt:.6f},{data['bid_price']},{data['ask_price']},{data['bid_size']},{data['ask_size']}"
-        send_data(redis_conn, REDIS_PRODUCER, 'quotes', message, message_counter)
+        data['id_string'] = "Q"
+        keys = ['ticker', 'id_string', 'timestamp', 'bid_price', 'ask_price', 'bid_size', 'ask_size']
+        send_message(redis_conn, logger, REDIS_PRODUCER, 'quotes', message_counter, data, keys)
         message_counter += 1
-        #redis_conn.publish('quotes', message)
-
+        return
+    
     def trade_data_handler(data):
-        print(data)
+
         global message_counter
-        # trade data will arrive here
-        dt = datetime.timestamp(data['timestamp'])
-        message =f"T,{dt:.6f},{data['price']},{data['size']}"
-        logger.info(data['ticker'], message)
-
-        message =f"{data['ticker']},{dt:.6f},{data['price']},{data['size']}"
-        send_data(redis_conn, REDIS_PRODUCER, 'trades', message, message_counter)
+        data['id_string'] = "T"
+        keys = ['ticker', 'id_string', 'timestamp', 'price', 'size']
+        send_message(redis_conn, logger, REDIS_PRODUCER, 'trades', message_counter, data, keys)
         message_counter += 1
-        #redis_conn.publish('trades', message)
-
-    def updated_bar_handler(data):
-        global message_counter
-        # updated bar data will arrive here
-        dt = datetime.timestamp(data['timestamp'])
-        message =f"BU,{dt:.6f},{data['open']},{data['high']},{data['low']},{data['close']},{data['volume'],data['vwap'],data['trade_count']}"
-        message = message.replace("(", "").replace(")", "").replace(" ", "")
-        logger.info(data['ticker'], message)
-
-        message = f"{data['ticker']},{dt:.6f},{data['open']},{data['high']},{data['low']},{data['close']},{data['volume'],data['vwap'],data['trade_count']}"
-        message = message.replace("(", "").replace(")", "").replace(" ", "")
-        send_data(redis_conn, REDIS_PRODUCER, 'bars_updated', message, message_counter)
-        message_counter += 1
-        #redis_conn.publish('bars_updated', message)
+        return
         
+    def updated_bar_handler(data):
 
-    def bars_handler(data):
-        print(data)
         global message_counter
-        # One minute bar data will arrive here
-        dt = datetime.timestamp(data['timestamp'])
-        message =f"B,{dt:.6f},{data['open']},{data['high']},{data['low']},{data['close']},{data['volume'],data['vwap'],data['trade_count']}"
-        message = message.replace("(", "").replace(")", "").replace(" ", "")
-        logger.info(data['ticker'], message)
-
-        message = f"{data['ticker']},{dt:.6f},{data['open']},{data['high']},{data['low']},{data['close']},{data['volume'],data['vwap'],data['trade_count']}"
-        message = message.replace("(", "").replace(")", "").replace(" ", "")
-        send_data(redis_conn, REDIS_PRODUCER, 'bars', message, message_counter)
+        data['id_string'] = "BU"
+        data['minute_span'] = "1"
+        keys = ['ticker', 'id_string', 'timestamp', 'minute_span', 'open', 'high', 'low', 'close', 'volume', 'vwap', 'trade_count']
+        send_message(redis_conn, logger, REDIS_PRODUCER, 'bars_updated', message_counter, data, keys)
         message_counter += 1
-        #redis_conn.publish('bars', message)
+        return
+    
+    def bars_handler(data):
 
-    api.start_data_stream(tickers, quote_data_handler, bars_handler, trade_data_handler, updated_bar_handler )
+        global message_counter
+        data['id_string'] = "B"
+        data['minute_span'] = "1"
+        keys = ['ticker', 'id_string', 'timestamp', 'minute_span', 'open', 'high', 'low', 'close', 'volume', 'vwap', 'trade_count']
+        send_message(redis_conn, logger, REDIS_PRODUCER, 'bars', message_counter, data, keys)
+        message_counter += 1
+        return
+        
+    #api.start_data_stream(tickers, quote_data_handler, bars_handler, trade_data_handler, updated_bar_handler )
+    api.start_data_stream(tickers, None, bars_handler, trade_data_handler, updated_bar_handler )
     
 
 # execute trading bot

@@ -114,10 +114,11 @@ class MyTimedRotatingFileHandler(logging.handlers.TimedRotatingFileHandler):
         if not os.path.isdir(self.new_dir):
             os.mkdir(self.new_dir)
         self.baseFilename = os.path.abspath(os.path.join(self.new_dir, self.title))
-        if self.encoding:
+        """if self.encoding:
             self.stream = codecs.open(self.baseFilename, "a", self.encoding)
         else:
-            self.stream = open(self.baseFilename, "a")
+            self.stream = open(self.baseFilename, "a")"""
+        self.stream = open(self.baseFilename, "a")
 
         self.rolloverAt = self.rolloverAt + self.interval
 

@@ -54,6 +54,12 @@ def add_process_to_pid_list(process_name):
     """
     processes.add_this_process_to_pid_list(os.path.basename(process_name))
 
+def remove_process_from_list(process_name):
+    """Remove the current process from the pid file.
+    Args:
+        process_name (str): The name of the process to remove
+    """
+    processes.remove_process_from_list(os.path.basename(process_name)) 
 
 
 def send_stock_info_to_redis_stream(producer, message_channel, message, counter):

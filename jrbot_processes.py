@@ -10,8 +10,4 @@ def run():
         time.sleep(5)
 if __name__ == "__main__":
 
-    daemon_process = multiprocessing.Process(target=run)
-    daemon_process.daemon = True
-    daemon_process.start()
-    daemon_process.join()
-    print("FINISHED")
+    run()

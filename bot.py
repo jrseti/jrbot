@@ -50,6 +50,7 @@ for message in pubsub.listen():
                     quote_count += 1
 
                 if channel == 'trades':
+                    print(data)
                     trades_count += 1
 
                 if channel == 'bars':

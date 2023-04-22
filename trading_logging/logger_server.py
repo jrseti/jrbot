@@ -9,10 +9,14 @@ from socketserver import BaseRequestHandler
 from socketserver import UDPServer
 import pickle
 import codecs
+import socket
 
 # Create a class to handle logging over UDP
 # A lot of effort went into rotating the log files and also
 # creating a new directory for each day or time period.
+
+# The log server responds to a PING message with a PONG message. This
+# is used by other processes to check if the log server is running.
 
 log_server_config = {}
 
@@ -124,6 +128,11 @@ class UDPLogServerHandler(BaseRequestHandler):
         """Handle the UDP log message"""
 
         chunk = self.request[0]
+        # Process a PING
+        if chunk[0:4] == b'PING':
+            print("GOT A PING")
+            self.server.socket.sendto(b'PONG', self.client_address)
+            return
         data = pickle.loads(chunk[4:])
         if len(data) == 0:
             return
@@ -209,6 +218,48 @@ def run_server(config):
                                            f"Log server shut down with Ctrl+C",
                                              None, None))
         print ("Crtl+C Pressed. Shutting down.")
+
+def ping(config):
+    """Ping the log server to see if it is running.
+    Arguments:
+        config {dict} -- The configuration dictionary
+        Requires the following keys to have valis values in the config dictionary:
+        "LOG_HOST", "LOG_PORT"
+    Returns:
+        bool -- True if the server responded, False otherwise
+    """
+
+    # Check for the required keys to be in the config dictionary.
+    # Raise an exception if any are missing.
+    required_config_keys = ["LOG_HOST", "LOG_PORT"]
+    for key in required_config_keys:
+        if key not in config:
+            raise ValueError(f"Missing required key: {key}, check the config file.")
+        
+    # Send a datagram to the log server
+    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    data = "PING".encode('ascii')
+    print(data)
+    sock.sendto(data, (config["LOG_HOST"], config["LOG_PORT"]))
+
+    #wait 2 seconds for a response
+    sock.settimeout(2)
+    try:
+        data, addr = sock.recvfrom(1024)
+        print(data)
+        if len(data) == 4 and data == b'PONG':
+            sock.close()
+            return True
+        sock.close()
+    except socket.timeout:
+        print("No response from log server")
+        sock.close()
+
+    return False
+
+if __name__ == "__main__":
+    config = {"LOG_HOST" : "localhost", "LOG_PORT" : 19987}
+    print(ping(config))
 
 
 
